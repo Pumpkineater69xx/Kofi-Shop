@@ -127,7 +127,7 @@ const App: React.FC = () => {
   return (
     <div className="flex flex-col md:flex-row h-screen w-screen overflow-hidden bg-white">
       <div className={`
-        fixed inset-y-0 left-0 z-[1100] w-full md:relative md:w-[400px] transition-transform duration-300 ease-in-out
+        fixed inset-y-0 left-0 z-[1500] w-full md:relative md:w-[400px] transition-transform duration-300 ease-in-out
         ${showListOnMobile ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
       `}>
         <Sidebar 
