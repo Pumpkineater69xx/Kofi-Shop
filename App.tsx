@@ -21,6 +21,12 @@ const App: React.FC = () => {
   const [showListOnMobile, setShowListOnMobile] = useState(false);
   const [userLocation, setUserLocation] = useState<MapPosition | null>(null);
 
+  // 🔥 Helper to remove expired items
+  const filterExpiredItems = (items: CurbsideItem[]) => {
+    const now = Date.now();
+    return items.filter(item => now - item.createdAt <= EXPIRATION_MS);
+  };
+
   // Initial Data Fetch
   useEffect(() => {
     const savedUser = localStorage.getItem(USER_KEY);
@@ -29,25 +35,44 @@ const App: React.FC = () => {
     }
 
     const syncItems = async () => {
-      // 1. Load from local first for speed
+      // 1. Load from local first
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
-        try { setItems(JSON.parse(saved)); } catch (e) { console.error(e); }
+        try {
+          const parsed = JSON.parse(saved);
+          const filtered = filterExpiredItems(parsed);
+          setItems(filtered);
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(filtered));
+        } catch (e) { console.error(e); }
       }
 
-      // 2. Fetch from cloud for freshness (cross-device sync)
+      // 2. Fetch from cloud
       const cloudItems = await fetchItemsFromCloud();
       if (cloudItems) {
-        setItems(cloudItems);
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(cloudItems));
+        const filtered = filterExpiredItems(cloudItems);
+        setItems(filtered);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(filtered));
       }
     };
 
     syncItems();
 
-    // Set up auto-sync every 30 seconds
+    // Sync every 30 seconds
     const syncInterval = setInterval(syncItems, 30000);
-    return () => clearInterval(syncInterval);
+
+    // 🧹 Cleanup expired items every minute
+    const cleanupInterval = setInterval(() => {
+      setItems(prev => {
+        const filtered = filterExpiredItems(prev);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(filtered));
+        return filtered;
+      });
+    }, 60000);
+
+    return () => {
+      clearInterval(syncInterval);
+      clearInterval(cleanupInterval);
+    };
   }, []);
 
   // Location logic
@@ -56,8 +81,10 @@ const App: React.FC = () => {
       navigator.geolocation.getCurrentPosition(
         (pos) => {
           const loc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-          if (loc.lat >= MAP_BOUNDS[0][0] && loc.lat <= MAP_BOUNDS[1][0] && 
-              loc.lng >= MAP_BOUNDS[0][1] && loc.lng <= MAP_BOUNDS[1][1]) {
+          if (
+            loc.lat >= MAP_BOUNDS[0][0] && loc.lat <= MAP_BOUNDS[1][0] &&
+            loc.lng >= MAP_BOUNDS[0][1] && loc.lng <= MAP_BOUNDS[1][1]
+          ) {
             setUserLocation(loc);
             setMapCenter(loc);
           }
@@ -92,25 +119,24 @@ const App: React.FC = () => {
       reporter: currentUser?.name || 'Anonymous',
       reporterAnimal: currentUser?.animal
     };
-    
-    // Save locally
+
     setItems(prev => [newItem, ...prev]);
     setIsAdding(false);
     setClickPos(null);
     setSelectedItem(newItem);
 
-    // Save to Cloud
     await saveItemToCloud(newItem);
   };
 
   const handleMarkFound = async (id: string) => {
     const foundAt = Date.now();
-    setItems(prev => prev.map(item => 
-      item.id === id ? { ...item, isFound: true, foundAt } : item
-    ));
+    setItems(prev =>
+      prev.map(item =>
+        item.id === id ? { ...item, isFound: true, foundAt } : item
+      )
+    );
     setSelectedItem(null);
-    
-    // Sync update to cloud
+
     await updateItemInCloud(id, { isFound: true, foundAt });
   };
 
@@ -118,13 +144,12 @@ const App: React.FC = () => {
 
   return (
     <div className="flex flex-col md:flex-row h-screen w-screen overflow-hidden bg-white relative">
-      {/* Sidebar Container */}
       <div className={`
         fixed inset-0 z-[1500] md:relative md:inset-auto md:z-10 md:w-[400px] transition-transform duration-300 ease-in-out
         ${showListOnMobile ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
       `}>
-        <Sidebar 
-          items={items} 
+        <Sidebar
+          items={items}
           selectedItem={selectedItem}
           currentUser={currentUser}
           onSelectItem={handleSelectItem}
@@ -135,39 +160,43 @@ const App: React.FC = () => {
       </div>
 
       <main className="flex-1 relative h-full w-full">
-        <MapView 
-          items={items} 
-          center={mapCenter} 
+        <MapView
+          items={items}
+          center={mapCenter}
           onMapClick={handleMapClick}
           onItemClick={handleSelectItem}
           selectedItemId={selectedItem?.id}
         />
 
-        {/* Floating Controls */}
         <div className="absolute top-4 right-4 z-[1000] space-y-2">
-          <button 
+          <button
             onClick={() => userLocation && setMapCenter(userLocation)}
             className="w-12 h-12 bg-white/95 rounded-2xl shadow-xl flex items-center justify-center text-blue-600 border border-slate-200 active:scale-90 transition-all"
           >
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path></svg>
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2"
+                d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+            </svg>
           </button>
         </div>
 
-        {/* Mobile FAB to see list */}
         {!showListOnMobile && (
-          <button 
+          <button
             onClick={() => setShowListOnMobile(true)}
             className="md:hidden absolute bottom-10 left-1/2 -translate-x-1/2 z-[1000] px-8 py-4 bg-slate-900 text-white rounded-full shadow-2xl font-black flex items-center gap-3 active:scale-95 transition-all"
           >
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M4 6h16M4 12h16M4 18h16"></path></svg>
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3"
+                d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
             Show List
           </button>
         )}
       </main>
 
       {isAdding && (
-        <AddItemModal 
-          position={clickPos} 
+        <AddItemModal
+          position={clickPos}
           onClose={() => { setIsAdding(false); setClickPos(null); }}
           onSave={handleSaveItem}
         />
